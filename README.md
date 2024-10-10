@@ -16,7 +16,7 @@ A Python-based Mattermost bot for managing team attendance, vacations, and membe
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.9+ (Tested on Python 3.12.7)
 - Docker
 - Mattermost server
 
@@ -32,7 +32,6 @@ git clone https://github.com/metr0jw/Attendance-Birthday-Tracker-Mattermost-Bot 
 pip install -r requirements.txt
 ```
 3. Set up your configuration:
-- Copy `config.json.example` to `config.json`
 - Edit `config.json` with your Mattermost server details and bot token
 
 #### Using Docker
