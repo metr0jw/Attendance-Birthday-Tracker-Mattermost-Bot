@@ -1,0 +1,11 @@
+{
+    "DEBUG": false,
+    "mattermost_url": "myurl.com",
+    "bot_token": "bot_token",
+    "channel_id_attendance": "channel_id_for_attendance",
+    "channel_id_birthday": "channel_id_for_announcement_of_birthday",
+    "channel_id_admin": "channel_id_for_admin",
+    "channel_id_debug": "channel_id_for_debug",
+    "db_path": "/data/mydb.db",
+    "db_path_debug": "debugdb.db"
+}
