@@ -5,10 +5,12 @@ import datetime
 import sqlite3
 import time
 
-from configs import DB_PATH, mattermost_url, bot_token, channel_id_attendance, channel_id_birthday, channel_id_admin, channels_to_monitor
-from commands import help_command, record_attendance, record_missing, record_vacation, get_team_status, get_monthly_report, \
+from configs import DB_PATH, mattermost_url, bot_token, channel_id_attendance, channel_id_birthday, channel_id_admin, channels_to_monitor, \
+    DEBUG
+from commands import help_command, record_attendance, record_missing, recent_records, edit_record, delete_record, \
+    record_vacation, get_team_status, get_monthly_report, \
     add_member, update_member, delete_member, get_member
-from utils import birthday_greeting_daily, birthday_greeting_monthly
+from utils import birthday_greeting_daily, birthday_greeting_monthly, auto_checkout
 
 
 bot = mattermostdriver.Driver({
@@ -55,6 +57,9 @@ def handle_message(post):
 
         if command == '!도움' or command == '!h' or command == '!help' :
             return help_command()
+        ######################################
+        ### Attendance management commands ###
+        ######################################
         elif command == '!출근' or command == '!in':
             location = None
             return record_attendance(bot, c, conn, user_id, 'in', location if location is not None else 'Not specified')
@@ -72,17 +77,34 @@ def handle_message(post):
                     f"Example: `!missing 2024-08-01 09:00:00 18:00:00`\n"
                 )
             return record_missing(bot, c, conn, user_id, text[1], text[2], text[3])
-        elif command == '!퇴근누락' or command == '!missingout':
-            if len(text) < 3:
+        elif command == '!최근기록' or command == '!recentrecord':
+            return recent_records(bot, c, conn, user_id)
+        elif command == '!수정' or command == '!edit':
+            if len(text) < 4:
                 return (
                     f"## 잘못된 형식 (Invalid Format)\n"
-                    f"올바른 사용법: `!missingout YYYY-MM-DD <time_out>`\n"
-                    f"예시: `!missingout 2024-08-01 18:00:00`\n"
+                    f"올바른 사용법: `!edit <인덱스> <날짜> <출근시간> <퇴근시간:선택> <위치:선택>`\n"
+                    f"인덱스는 최근 7일 출퇴근 기록에서 선택한 인덱스입니다. '!최근기록'을 사용해 확인하세요.\n"
+                    f"예시: `!edit 0 2024-08-01 09:00:00 18:00:00 집`\n"
                     f"\n"
-                    f"Use: `!missingout YYYY-MM-DD <time_out>`\n"
-                    f"Example: `!missingout 2024-08-01 18:00:00`\n"
+                    f"Use: `!edit <index> <date> <time_in> <time_out:optional> <location:optional>`\n"
+                    f"Index is selected from recent 7 days' attendance records. Use `!recentrecord` to check.\n"
+                    f"Example: `!edit 0 2024-08-01 09:00:00 18:00:00 Home`\n"
                 )
-            return record_missing(bot, c, conn, user_id, text[1], text[2])
+            return edit_record(bot, c, conn, user_id, text[1], text[2], text[3], text[4] if len(text) > 4 else None, text[5] if len(text) > 5 else None)
+        elif command == '!삭제' or command == '!delete':
+            if len(text) < 2:
+                return (
+                    f"## 잘못된 형식 (Invalid Format)\n"
+                    f"올바른 사용법: `!delete <인덱스>`\n"
+                    f"인덱스는 최근 7일 출퇴근 기록에서 선택한 인덱스입니다. '!최근기록'을 사용해 확인하세요.\n"
+                    f"예시: `!delete 0`\n"
+                    f"\n"
+                    f"Use: `!delete <index>`\n"
+                    f"Index is selected from recent 7 days' attendance records. Use `!recentrecord` to check.\n"
+                    f"Example: `!delete 0`\n"
+                )
+            return delete_record(bot, c, conn, user_id, text[1])
         elif command == '!휴가' or command == '!vacation':
             if len(text) < 4:
                 return (
@@ -129,6 +151,10 @@ def handle_message(post):
                     )
             # Get the monthly report for the current month
             return get_monthly_report(bot, c, conn, user_id)
+
+        ##################################
+        ### Member management commands ###
+        ##################################
         elif command == '!멤버추가' or command == "!addmember":
             if len(text) < 7:
                 return (
@@ -150,6 +176,20 @@ def handle_message(post):
                     f"Member {text[1]} already exists.\n"
                     f"Use `!updatemember` to update the information or `!deletemember` to delete the member.\n"
                 )
+        elif command == '!멤버삭제' or command == "!deletemember":
+            if len(text) < 2:
+                return (
+                    f"## 잘못된 형식 (Invalid Format)\n"
+                    f"올바른 사용법: `!deletemember <사용자ID>`\n"
+                    f"예시: `!deletemember @gdhong`\n"
+                    f"\n"
+                    f"Use: `!deletemember <user_id>`\n"
+                    f"Example: `!deletemember @gdhong`\n"
+                )
+            try:
+                return delete_member(bot, c, conn, text[1])
+            except sqlite3.IntegrityError:
+                return f"Error: Member {text[1]} does not exist."
         elif command == '!멤버업데이트' or command == "!updatemember":
             if len(text) < 7:
                 return (
@@ -171,20 +211,6 @@ def handle_message(post):
                     f"Member {text[1]} does not exist.\n"
                     f"Use `!addmember` to add the member.\n"
                 )
-        elif command == '!멤버삭제' or command == "!deletemember":
-            if len(text) < 2:
-                return (
-                    f"## 잘못된 형식 (Invalid Format)\n"
-                    f"올바른 사용법: `!deletemember <사용자ID>`\n"
-                    f"예시: `!deletemember @gdhong`\n"
-                    f"\n"
-                    f"Use: `!deletemember <user_id>`\n"
-                    f"Example: `!deletemember @gdhong`\n"
-                )
-            try:
-                return delete_member(bot, c, conn, text[1])
-            except sqlite3.IntegrityError:
-                return f"Error: Member {text[1]} does not exist."
         elif command == '!멤버조회' or command == "!memberinfo":
             if len(text) < 2:
                 return (
@@ -243,10 +269,17 @@ def main():
     birthday_printed_daily = False
     last_birthday_date_daily = None
 
+    # Initialize the auto checkout variables4
+    auto_checkout_reponded = False
+    last_auto_checkout_date = None
+
     while True:
         ### Post birthday greetings every day at 12:00 PM ###
         now = datetime.datetime.now()
 
+        ##########################
+        ### Birthday greetings ###
+        ##########################
         # Reset birthday_printed at the start of a new month
         if last_birthday_date_monthly is None or now.month != last_birthday_date_monthly:
             birthday_printed_monthly = False
@@ -278,6 +311,27 @@ def main():
             # Mark the birthday greeting as printed and update the date
             birthday_printed_daily = True
             last_birthday_date_daily = now.date()
+        
+        ############################
+        ### Auto checkout system ###
+        ############################
+        ### Auto checkout users every day at 23:59 ###
+        # Reset auto_checkout_reponded at the start of a new day
+        if last_auto_checkout_date is None or now.date() != last_auto_checkout_date:
+            auto_checkout_reponded = False
+
+        # Auto checkout users who have checked in but not checked out at 23:59
+        if now.hour == 23 and now.minute == 59 and not auto_checkout_reponded:
+            auto_checkout_responses = auto_checkout(bot, c, conn)    # auto_checkout_responses: [(user_id, response), ...]
+            if auto_checkout_responses:
+                for user_id, response in auto_checkout_responses:
+                    dm_channel = bot.channels.create_direct_message_channel([bot_user_id, user_id])
+                    bot.posts.create_post({
+                        'channel_id': dm_channel['id'] if not DEBUG else channel_id_attendance, # Use the attendance channel in DEBUG mode
+                        'message': response
+                    })
+            auto_checkout_reponded = True
+            last_auto_checkout_date = now.date()
 
         # Fetch messages since the last processed timestamp
         # Process messages from multiple channels
@@ -306,7 +360,7 @@ def main():
                     # Send the response to individual users in a direct message
                     dm_channel = bot.channels.create_direct_message_channel([bot_user_id, post['user_id']])
                     bot.posts.create_post({
-                        'channel_id': dm_channel['id'],
+                        'channel_id': dm_channel['id'] if not DEBUG else channel_id_attendance, # Use the attendance channel in DEBUG mode
                         'message': response
                     })
                 # Update last_processed to the latest timestamp

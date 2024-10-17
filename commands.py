@@ -3,10 +3,12 @@ from statistics import mean, stdev
 import datetime
 
 from configs import get_datetime, cal, channel_id_attendance
+from utils import is_future, is_past
 
 
 def help_command():
     help_message = (
+        f"## Attendance Bot version 241018\n"
         f"# Bot Commands\n"
         f"All commands must start with a '!' character.\n"
         f"모든 명령어는 '!' 문자로 시작해야 합니다.\n"
@@ -38,11 +40,22 @@ def help_command():
         f"- 누락된 출퇴근 기록 입력 Enter missing attendance\n"
         f"- **Example:** `!출퇴근누락 2024-12-31 09:00:00 18:00:00` or `!missing 2024-12-31 09:00:00 18:00:00`\n"
         f"\n"
-        f"#### Missing Check-out\n"
-        f"- `!퇴근누락 <일자> <퇴근시간>`, `!missingout <date> <time_out>`\n"
-        f"- 누락된 퇴근 시간 입력 Enter missing leave time\n"
-        f"- **Example:** `!퇴근누락 2024-12-31 18:00` or `!missingout 2024-12-31 18:00`\n"
+        f"#### Look up recent records\n"
+        f"- `!recentrecord`, `!최근기록`\n"
+        f"- 최근 7일 출퇴근 기록 조회 Look up recent 7 days' attendance records\n"
+        f"- **Example:** `!recentrecord` or `!최근기록`\n"
         f"\n"
+        f"### Edit a Record\n"
+        f"- `!수정 <인덱스> <날짜> <출근시간> <퇴근시간:선택> <위치:선택>`, `!edit <index> <date> <time_in> <time_out:optional> <location:optional>`\n"
+        f"- 최근 7일 출퇴근 기록 수정 Edit a record within recent 7 days\n"
+        f"- **Example:** `!수정 0 2024-12-31 09:00:00 18:00:00` or `!edit 0 2024-12-31 09:00:00 18:00:00`\n"
+        f"- **Note:** Index는 최근 7일 출퇴근 기록에서 선택한 인덱스입니다. Index is selected from recent 7 days' attendance records.\n"
+        f"\n"
+        f"### Delete a Record\n"
+        f"- `!삭제 <인덱스>`, `!delete <index>`\n"
+        f"- 최근 7일 특정 출퇴근 기록 삭제 Delete a record within recent 7 days\n"
+        f"- **Example:** `!삭제 0` or `!delete 0`\n"
+        f"- **Note:** Index는 최근 7일 출퇴근 기록에서 선택한 인덱스입니다. Index is selected from recent 7 days' attendance records.\n"
         f"#### Vacation\n"
         f"- `!휴가 <휴가시작일> <휴가마감일> <사유>`, `!vacation <start_date> <end_date> <reason>`\n"
         f"- 휴가 기록 Record vacation\n"
@@ -67,15 +80,15 @@ def help_command():
         f"- 멤버 추가 Add a member\n"
         f"- **Example:** `!멤버추가 @gdhong 홍길동 PhD 010-1234-5678 1970-01-01` or `!addmember @gdhong Gildong-Hong PhD 010-1234-5678 gdhong@kw.ac.kr 1970-01-01`\n"
         f"\n"
-        f"#### Update Member\n"
-        f"- `!멤버업데이트 <@아이디> <과정:선택> <전화번호:선택> <이메일:선택> <생일:선택>`, `!updatemember <@user_id> <position:optional> <phone:optional> <email:optional> <birthday:optional>`\n"
-        f"- 멤버 정보 업데이트 Update member info (optional)\n"
-        f"- **Example:** `!멤버업데이트 @gdhong PhD 010-1234-5678 gdhong@kw.ac.kr 1970-01-01` or `!updatemember @gdhong PhD 010-1234-5678`\n"
-        f"\n"
         f"#### Delete Member\n"
         f"- `!멤버삭제 <@아이디>`, `!deletemember <@user_id>`\n"
         f"- 멤버 삭제 Delete a member\n"
         f"- **Example:** `!멤버삭제 @gdhong` or `!deletemember @gdhong`\n"
+        f"\n"
+        f"#### Update Member\n"
+        f"- `!멤버업데이트 <@아이디> <과정:선택> <전화번호:선택> <이메일:선택> <생일:선택>`, `!updatemember <@user_id> <position:optional> <phone:optional> <email:optional> <birthday:optional>`\n"
+        f"- 멤버 정보 업데이트 Update member info (optional)\n"
+        f"- **Example:** `!멤버업데이트 @gdhong PhD 010-1234-5678 gdhong@kw.ac.kr 1970-01-01` or `!updatemember @gdhong PhD 010-1234-5678`\n"
         f"\n"
         f"#### Member Info\n"
         f"- `!멤버조회 <@아이디>`, `!memberinfo <@user_id>`\n"
@@ -106,13 +119,13 @@ def record_attendance(bot, c, conn, user_id, action, location):
             return f"Error: You are already checked in for {date}. Please check out first."
         else:
             c.execute("INSERT INTO attendance VALUES (?, ?, ?, ?, ?)", 
-                      (user_id, date, time_now, None, location))
+                    (user_id, date, time_now, None, location))
     elif action == 'out':
         c.execute("UPDATE attendance SET time_out = ?, location = ? WHERE user_id = ? AND date = ? AND time_out IS NULL", 
-                  (time_now, location, user_id, date))
+                (time_now, location, user_id, date))
         if c.rowcount == 0:
             return f"Error: No active check-in found for {date}. Please check in first."
-    
+
     conn.commit()
     return (
         f"## 출퇴근 기록 (Attendance Record)\n"
@@ -120,12 +133,12 @@ def record_attendance(bot, c, conn, user_id, action, location):
         f"- **날짜 (Date):** {date}\n"
         f"- **시간 (Time):** {time_now}\n"
         f"- **위치 (Location):** {location}\n"
+        f"- **상태 (Status):** 성공적으로 기록됨 (Successfully recorded)\n"
     )
 
 def record_missing(bot, c, conn, user_id, date, time_in, time_out=None):
     # Check if future date, which is not allowed
-    now = get_datetime()
-    if date > now.strftime("%Y-%m-%d"):
+    if is_future(date):
         return (
             f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
             f"- **날짜 (Date):** {date}\n"
@@ -133,6 +146,12 @@ def record_missing(bot, c, conn, user_id, date, time_in, time_out=None):
         )
     
     if time_out:
+        if is_past(time_out, time_in):
+            return (
+                f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
+                f"- **날짜 (Date):** {date}\n"
+                f"- **상태 (Status):** 퇴근 시간이 출근 시간보다 빠를 수 없습니다 (Check-out time cannot be earlier than check-in time)\n"
+            )
         c.execute("INSERT INTO attendance VALUES (?, ?, ?, ?, ?)", 
                   (user_id, date, time_in, time_out, "Manual Entry"))
     else:
@@ -143,6 +162,94 @@ def record_missing(bot, c, conn, user_id, date, time_in, time_out=None):
         f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
         f"- **날짜 (Date):** {date}\n"
         f"- **상태 (Status):** 성공적으로 기록됨 (Successfully recorded)\n"
+    )
+
+def recent_records(bot, c, conn, user_id):
+    # Print recent 7 days' attendance records
+    c.execute("SELECT * FROM attendance WHERE user_id = ? ORDER BY date DESC LIMIT 7", (user_id,))
+    records = reversed(c.fetchall())
+
+    if not records:
+        return "No recent attendance records found."
+    
+    recent_records = []
+    for idx, record in enumerate(records):
+        user_id, date, time_in, time_out, location = record
+        recent_records.append(f"{idx}. **{date}**: {time_in} - {time_out if time_out else 'Not checked out'}")
+    
+    return (
+        f"## 최근 출퇴근 기록 (Recent Attendance Records)\n"
+        + "\n".join(recent_records)
+    )
+
+def edit_record(bot, c, conn, user_id, index, date, time_in, time_out=None, location=None):
+    # Edit a record within recent 7 days (0-indexed)
+    # Index is described in the recent_records function
+    # Check if future date, which is not allowed
+    if is_future(date):
+        return (
+            f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
+            f"- **날짜 (Date):** {date}\n"
+            f"- **상태 (Status):** 미래 날짜는 수정할 수 없습니다 (Cannot edit future dates)\n"
+        )
+    
+    c.execute("SELECT * FROM attendance WHERE user_id = ? ORDER BY date DESC LIMIT 7", (user_id,))
+    records = list(reversed(c.fetchall()))
+
+    if not records:
+        return "No recent attendance records found."
+    
+    try:
+        # Select the record corresponding to the index
+        record = records[int(index)]
+        user_id, date_old, time_in_old, time_out_old, location_old = record
+        
+    except IndexError:
+        return "Error: Invalid record index."
+    if time_out:
+        if is_past(time_out, time_in):
+            return (
+                f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
+                f"- **날짜 (Date):** {date}\n"
+                f"- **상태 (Status):** 퇴근 시간이 출근 시간보다 빠를 수 없습니다 (Check-out time cannot be earlier than check-in time)\n"
+            )
+        c.execute("UPDATE attendance SET date = ?, time_in = ?, time_out = ?, location = ? WHERE user_id = ? AND date = ? AND time_in = ?", 
+                    (date, time_in, time_out, location if location else location_old, user_id, date_old, time_in_old))
+    else:
+        c.execute("UPDATE attendance SET date = ?, time_in = ?, location = ? WHERE user_id = ? AND date = ? AND time_in = ?",
+                    (date, time_in, location if location else location_old, user_id, date_old, time_in_old))
+    conn.commit()
+    return (
+        f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
+        f"- **날짜 (Date):** {date}\n"
+        f"- **시간 (Time):** {time_in} - {time_out if time_out else 'Not checked out'}\n"
+        f"- **위치 (Location):** {location}\n"
+        f"- **상태 (Status):** 성공적으로 수정됨 (Successfully edited)\n"
+    )
+
+def delete_record(bot, c, conn, user_id, index):
+    # Delete a record within recent 7 days (0-indexed)
+    # Index is described in the recent_records function
+    c.execute("SELECT * FROM attendance WHERE user_id = ? ORDER BY date DESC LIMIT 7", (user_id,))
+    records = list(reversed(c.fetchall()))
+
+    if not records:
+        return "No recent attendance records found."
+    
+    try:
+        record = records[int(index)]
+    except IndexError:
+        return "Error: Invalid record index."
+    
+    user_id, date, time_in, time_out, location = record
+    c.execute("DELETE FROM attendance WHERE user_id = ? AND date = ?", (user_id, date))
+    conn.commit()
+    return (
+        f"## 출퇴근 기록 삭제 (Attendance Record Deleted)\n"
+        f"- **날짜 (Date):** {date}\n"
+        f"- **시간 (Time):** {time_in} - {time_out if time_out else 'Not checked out'}\n"
+        f"- **위치 (Location):** {location}\n"
+        f"- **상태 (Status):** 성공적으로 삭제됨 (Successfully deleted)\n"
     )
 
 def record_vacation(bot, c, conn, user_id, start_date, end_date, reason):
@@ -280,6 +387,10 @@ def get_monthly_report(bot, c, conn, requested_user, year=None, month=None):
 
     return f"{requested_user_stats}\n\n{all_users_stats}"
 
+
+################################
+### Member Management System ###
+################################
 def add_member(bot, c, conn, user_id, username, position, phone, email, birthday):
     # table name: members_info
     # columns: user_id, name, phone, email, birthday
@@ -287,6 +398,11 @@ def add_member(bot, c, conn, user_id, username, position, phone, email, birthday
               (user_id, username, position, phone, email, birthday))
     conn.commit()
     return f"Member added: {username}"
+
+def delete_member(bot, c, conn, user_id):
+    c.execute("DELETE FROM members_info WHERE user_id = ?", (user_id,))
+    conn.commit()
+    return "Member deleted"
 
 def get_member(bot, c, conn, user_id):
     c.execute("SELECT * FROM members_info WHERE user_id = ?", (user_id,))
@@ -319,8 +435,3 @@ def update_member(bot, c, conn, user_id, position=None, phone=None, email=None, 
         c.execute("UPDATE members_info SET birthday = ? WHERE user_id = ?", (birthday, user_id))
     conn.commit()
     return "Member info updated"
-
-def delete_member(bot, c, conn, user_id):
-    c.execute("DELETE FROM members_info WHERE user_id = ?", (user_id,))
-    conn.commit()
-    return "Member deleted"
