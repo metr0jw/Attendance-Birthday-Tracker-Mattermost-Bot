@@ -108,7 +108,7 @@ def help_command():
 def record_attendance(bot, c, conn, user_id, action, location):
     now = get_datetime()
     date = now.strftime("%Y-%m-%d")
-    time_now = now.strftime("%H:%M:%S")
+    time_now = now.strftime("%H:%M")
     
     if action == 'in':
         # Check if there's an existing 'in' record without an 'out' for the same day
