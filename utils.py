@@ -1,10 +1,11 @@
-import datetime
+from datetime import datetime, date, time, timezone
+import logging
 
 from configs import get_datetime
 
 def is_future(date):    # Timezone - Asia/Seoul
-    now = get_datetime().replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
-    date = datetime.datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+    now = get_datetime().replace(tzinfo=timezone.utc).astimezone(tz=None)
+    date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=timezone.utc).astimezone(tz=None)
     return date > now
 
 def is_past(date1, date2):
@@ -15,20 +16,20 @@ def is_past(date1, date2):
         date1 = int(date1.replace(':', ''))
         date2 = int(date2.replace(':', ''))
     else:
-        date1 = datetime.datetime.strptime(date1, "%Y-%m-%d")
-        date2 = datetime.datetime.strptime(date2, "%Y-%m-%d")
+        date1 = datetime.strptime(date1, "%Y-%m-%d")
+        date2 = datetime.strptime(date2, "%Y-%m-%d")
     return date1 < date2    # True if date1 is in the past
 
 def valid_date(date):
     try:
-        datetime.datetime.strptime(date, "%Y-%m-%d")
+        datetime.strptime(date, "%Y-%m-%d")
         return True
     except ValueError:
         return False
     
 def valid_time(time):
     try:
-        datetime.datetime.strptime(time, "%H:%M")
+        datetime.strptime(time, "%H:%M")
         return True
     except ValueError:
         return False

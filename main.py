@@ -1,9 +1,13 @@
 import os
 
 import mattermostdriver
-import datetime
+from datetime import datetime, date, time
 import sqlite3
-import time
+import time as time_module
+from typing import Dict, List, Tuple, Optional
+from zoneinfo import ZoneInfo
+from dataclasses import dataclass
+import logging
 
 from configs import DB_PATH, mattermost_url, bot_token, channel_id_attendance, channel_id_birthday, channel_id_admin, channels_to_monitor, \
     DEBUG
@@ -12,6 +16,37 @@ from commands import help_command, record_attendance, record_missing, recent_rec
     add_member, update_member, delete_member, get_member, \
     fix_database
 from utils import birthday_greeting_daily, birthday_greeting_monthly, auto_checkout
+
+
+def setup_logger():
+    """Configure and return logger instance"""
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)
+
+    # Create handlers
+    console_handler = logging.StreamHandler()
+    file_handler = logging.FileHandler('bot.log')
+
+    # Create formatter
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+
+    # Add handlers
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+
+    return logger
+
+@dataclass
+class BirthdayState:
+    printed: bool = False
+    last_date: Optional[date] = None
+
+@dataclass
+class AutoCheckoutState:
+    responded: bool = False
+    last_date: Optional[date] = None
 
 
 bot = mattermostdriver.Driver({
@@ -121,7 +156,7 @@ def handle_message(post):
             if len(text) > 1:
                 # Check if the user provided a date
                 try:
-                    date = datetime.datetime.strptime(text[1], "%Y-%m-%d").strftime("%Y-%m-%d")
+                    date = datetime.strptime(text[1], "%Y-%m-%d").strftime("%Y-%m-%d")
                     return get_team_status(bot, c, conn, date)
                 except ValueError:
                     return (
@@ -138,7 +173,7 @@ def handle_message(post):
             if len(text) > 1:
                 # Check if the user provided a date
                 try:
-                    datetime.datetime.strptime(text[1], "%Y-%m")
+                    datetime.strptime(text[1], "%Y-%m")
                     requested_user = bot.users.get_user(user_id)['id']
                     return get_monthly_report(bot, c, conn, requested_user, text[1].split('-')[0], text[1].split('-')[1])
                 except ValueError:
@@ -271,117 +306,134 @@ def handle_message(post):
         )
     
 def main():
-    # Initialize last_processed to the current time in milliseconds
-    last_processed = int(datetime.datetime.now().timestamp() * 1000)
+    # Setup logger
+    logger = setup_logger()
 
-    # Initialize the daily birthday greeting variables
-    birthday_printed_monthly = False
-    last_birthday_date_monthly = None
-    birthday_printed_daily = False
-    last_birthday_date_daily = None
-
-    # Initialize the auto checkout variables4
-    auto_checkout_reponded = False
-    last_auto_checkout_date = None
-
-    while True:
-        ### Post birthday greetings every day at 12:00 PM ###
-        now = datetime.datetime.now()
-        # Timezone = Asia/Seoul
-        now = now.replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
-
-        ##########################
-        ### Birthday greetings ###
-        ##########################
-        # Reset birthday_printed at the start of a new month
-        if last_birthday_date_monthly is None or now.month != last_birthday_date_monthly:
-            birthday_printed_monthly = False
+    try:
+        # Initialize timezone
+        tz = ZoneInfo("Asia/Seoul")
+        logger.debug("Timezone set to Asia/Seoul")
         
-        # Reset birthday_printed at the start of a new day
-        if last_birthday_date_daily is None or now.date() != last_birthday_date_daily:
-            birthday_printed_daily = False
-
-        # Post birthday greetings at 12:00 PM on the first day of the month
-        if now.day == 1 and now.hour == 12 and not birthday_printed_monthly:
-            bday_response = birthday_greeting_monthly(bot, c, conn)
-            if bday_response:
-                bot.posts.create_post({
-                    'channel_id': channel_id_birthday,
-                    'message': bday_response
-                })
-            # Mark the birthday greeting as printed and update the date
-            birthday_printed_monthly = True
-            last_birthday_date_monthly = now.month
-
-        # Post birthday greetings at 12:00 PM
-        if now.hour == 12 and not birthday_printed_daily:
-            bday_response = birthday_greeting_daily(bot, c, conn)
-            if bday_response:
-                bot.posts.create_post({
-                    'channel_id': channel_id_birthday,
-                    'message': bday_response
-                })
-            # Mark the birthday greeting as printed and update the date
-            birthday_printed_daily = True
-            last_birthday_date_daily = now.date()
+        # Initialize states using dataclasses
+        monthly_birthday = BirthdayState()
+        daily_birthday = BirthdayState()
+        auto_checkout = AutoCheckoutState()
         
-        ############################
-        ### Auto checkout system ###
-        ############################
-        ### Auto checkout users every day at 23:59 ###
-        # Reset auto_checkout_reponded at the start of a new day
-        if last_auto_checkout_date is None or now.date() != last_auto_checkout_date:
-            auto_checkout_reponded = False
+        # Track message processing
+        last_processed = int(datetime.now(tz).timestamp() * 1000)
+        logger.info("Initial state initialized")
 
-        # Auto checkout users who have checked in but not checked out at 23:59
-        if now.hour == 23 and now.minute == 59 and not auto_checkout_reponded:
-            auto_checkout_responses = auto_checkout(bot, c, conn)    # auto_checkout_responses: [(user_id, response), ...]
-            if auto_checkout_responses:
-                for user_id, response in auto_checkout_responses:
-                    dm_channel = bot.channels.create_direct_message_channel([bot_user_id, user_id])
-                    bot.posts.create_post({
-                        'channel_id': dm_channel['id'] if not DEBUG else channel_id_attendance, # Use the attendance channel in DEBUG mode
-                        'message': response
-                    })
-            auto_checkout_reponded = True
-            last_auto_checkout_date = now.date()
+        # Time constants
+        NOON = time(12, 0)
+        MIDNIGHT = time(23, 59)
 
-        # Fetch messages since the last processed timestamp
-        # Process messages from multiple channels
-        for channel_id in channels_to_monitor:
-            messages = bot.posts.get_posts_for_channel(channel_id, params={'since': last_processed})
-            posts = messages.get('posts', {})
-            if not posts:
-                continue
-            # Process messages in the order they were posted
-            ordered_post_ids = sorted(posts, key=lambda x: posts[x]['create_at'])
-            for post_id in ordered_post_ids:
-                post = posts[post_id]
-
-                # Skip messages from the bot itself
-                if post['user_id'] == bot_user_id:
-                    continue
-                # Skip replies
-                if post.get('root_id'):
-                    continue
-                # Skip processed messages
-                if post['create_at'] <= last_processed:
-                    continue
+        def process_messages(channel_id: str, last_processed: int) -> int:
+            try:
+                messages = bot.posts.get_posts_for_channel(
+                    channel_id, 
+                    params={'since': last_processed}
+                )
                 
-                response = handle_message(post)
-                if response:
-                    # Send the response to individual users in a direct message
-                    dm_channel = bot.channels.create_direct_message_channel([bot_user_id, post['user_id']])
-                    bot.posts.create_post({
-                        'channel_id': dm_channel['id'] if not DEBUG else channel_id_attendance, # Use the attendance channel in DEBUG mode
-                        'message': response
-                    })
-                # Update last_processed to the latest timestamp
-                timestamp = post['create_at']
-                if timestamp > last_processed:
-                    last_processed = timestamp
+                if not (posts := messages.get('posts')):
+                    return last_processed
 
-        time.sleep(1)
+                logger.debug(f"Processing {len(posts)} messages from channel {channel_id}")
+                
+                for post in sorted(posts.values(), key=lambda x: x['create_at']):
+                    if (post['user_id'] == bot_user_id or 
+                        post.get('root_id') or 
+                        post['create_at'] <= last_processed):
+                        continue
+
+                    if response := handle_message(post):
+                        dm_channel = bot.channels.create_direct_message_channel(
+                            [bot_user_id, post['user_id']]
+                        )
+                        bot.posts.create_post({
+                            'channel_id': dm_channel['id'] if not DEBUG else channel_id_attendance,
+                            'message': response
+                        })
+                        logger.info(f"Sent response to user {post['user_id']}")
+                    
+                    last_processed = max(last_processed, post['create_at'])
+                
+                return last_processed
+            
+            except Exception as e:
+                logger.error(f"Error processing messages for channel {channel_id}: {e}")
+                return last_processed
+
+        while True:
+            try:
+                current_time = datetime.now(tz)
+                current_date = current_time.date()
+
+                # Handle birthday resets and checks
+                if (monthly_birthday.last_date is None or 
+                    current_time.month != monthly_birthday.last_date.month):
+                    monthly_birthday.printed = False
+                    monthly_birthday.last_date = current_date
+                    logger.debug("Monthly birthday state reset")
+
+                if (daily_birthday.last_date is None or 
+                    current_date != daily_birthday.last_date):
+                    daily_birthday.printed = False
+                    daily_birthday.last_date = current_date
+                    logger.debug("Daily birthday state reset")
+
+                # Handle monthly birthday greetings
+                if (current_time.day == 1 and 
+                    current_time.time() == NOON and 
+                    not monthly_birthday.printed):
+                    logger.info("Sending monthly birthday greetings")
+                    if bday_response := birthday_greeting_monthly(bot, c, conn):
+                        bot.posts.create_post({
+                            'channel_id': channel_id_birthday,
+                            'message': bday_response
+                        })
+                    monthly_birthday.printed = True
+
+                # Handle daily birthday greetings
+                if current_time.time() == NOON and not daily_birthday.printed:
+                    logger.info("Sending daily birthday greetings")
+                    if bday_response := birthday_greeting_daily(bot, c, conn):
+                        bot.posts.create_post({
+                            'channel_id': channel_id_birthday,
+                            'message': bday_response
+                        })
+                    daily_birthday.printed = True
+                
+                # Handle auto-checkout and fix_database
+                if (current_time.time() == MIDNIGHT and 
+                    not auto_checkout.responded):
+                    logger.info("Processing auto-checkout")
+                    checkout_response = auto_checkout(bot, c, conn)
+                    if checkout_response:
+                        for channel_id in channels_to_monitor:
+                            bot.posts.create_post({
+                                'channel_id': channel_id,
+                                'message': checkout_response
+                            })
+                    auto_checkout.responded = True
+
+                    try:
+                        fix_database(bot, c, conn)
+                    except sqlite3.IntegrityError:
+                        logger.error("Error fixing database")              
+
+                # Process messages from all channels
+                for channel_id in channels_to_monitor:
+                    last_processed = process_messages(channel_id, last_processed)
+
+                time_module.sleep(1)
+
+            except Exception as e:
+                logger.error(f"Error in main loop: {e}")
+                time_module.sleep(5)  # Back off on error
+
+    except Exception as e:
+        logger.critical(f"Fatal error in main function: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
