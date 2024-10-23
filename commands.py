@@ -8,7 +8,7 @@ from utils import is_future, is_past
 
 def help_command():
     help_message = (
-        f"## Attendance Bot version 241018\n"
+        f"## Attendance Bot version 241023\n"
         f"# Bot Commands\n"
         f"All commands must start with a '!' character.\n"
         f"모든 명령어는 '!' 문자로 시작해야 합니다.\n"
@@ -352,6 +352,11 @@ def get_monthly_report(bot, c, conn, requested_user, year=None, month=None):
         for date, day_records in user_records.items():
             daily_hours = 0
             for time_in, time_out, location in day_records:
+                # If time_in is HH:MM, convert to HH:MM:SS
+                if len(time_in) < 8:
+                    time_in += ":00"
+                if len(time_out) < 8:
+                    time_out += ":00"
                 time_in_dt = datetime.datetime.strptime(time_in, "%H:%M:%S")
                 time_out_dt = datetime.datetime.strptime(time_out, "%H:%M:%S")
                 hours_worked = (time_out_dt - time_in_dt).total_seconds() / 3600
