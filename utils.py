@@ -19,6 +19,20 @@ def is_past(date1, date2):
         date2 = datetime.datetime.strptime(date2, "%Y-%m-%d")
     return date1 < date2    # True if date1 is in the past
 
+def valid_date(date):
+    try:
+        datetime.datetime.strptime(date, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+    
+def valid_time(time):
+    try:
+        datetime.datetime.strptime(time, "%H:%M")
+        return True
+    except ValueError:
+        return False
+
 def birthday_greeting_daily(bot, c, conn):
     now = get_datetime()
     today = now.strftime("%m-%d")

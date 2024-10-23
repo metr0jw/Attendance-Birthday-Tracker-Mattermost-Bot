@@ -3,7 +3,7 @@ from statistics import mean, stdev
 import datetime
 
 from configs import get_datetime, cal, channel_id_attendance
-from utils import is_future, is_past
+from utils import is_future, is_past, valid_date, valid_time
 
 
 def help_command():
@@ -144,6 +144,18 @@ def record_missing(bot, c, conn, user_id, date, time_in, time_out=None):
             f"- **날짜 (Date):** {date}\n"
             f"- **상태 (Status):** 미래 날짜는 기록할 수 없습니다 (Cannot record future dates)\n"
         )
+    if not valid_date(date):
+        return (
+            f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
+            f"- **날짜 (Date):** {date}\n"
+            f"- **상태 (Status):** 날짜 형식이 잘못되었습니다 (Invalid date format)\n"
+        )
+    if not valid_time(time_in):
+        return (
+            f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
+            f"- **날짜 (Date):** {date}\n"
+            f"- **상태 (Status):** 출근 시간 형식이 잘못되었습니다 (Invalid check-in time format)\n"
+        )
     
     if time_out:
         if is_past(time_out, time_in):
@@ -151,6 +163,12 @@ def record_missing(bot, c, conn, user_id, date, time_in, time_out=None):
                 f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
                 f"- **날짜 (Date):** {date}\n"
                 f"- **상태 (Status):** 퇴근 시간이 출근 시간보다 빠를 수 없습니다 (Check-out time cannot be earlier than check-in time)\n"
+            )
+        if not valid_time(time_out):
+            return (
+                f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
+                f"- **날짜 (Date):** {date}\n"
+                f"- **상태 (Status):** 퇴근 시간 형식이 잘못되었습니다 (Invalid check-out time format)\n"
             )
         c.execute("INSERT INTO attendance VALUES (?, ?, ?, ?, ?)", 
                   (user_id, date, time_in, time_out, "Manual Entry"))
@@ -184,16 +202,33 @@ def recent_records(bot, c, conn, user_id):
 
 def edit_record(bot, c, conn, user_id, index, date, time_in, time_out=None, location=None):
     # Edit a record within recent 7 days (0-indexed)
-    # Index is described in the recent_records function
-    # Check if future date, which is not allowed
     if is_future(date):
         return (
             f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
             f"- **날짜 (Date):** {date}\n"
             f"- **상태 (Status):** 미래 날짜는 수정할 수 없습니다 (Cannot edit future dates)\n"
         )
+    if not valid_date(date):
+        return (
+            f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
+            f"- **날짜 (Date):** {date}\n"
+            f"- **상태 (Status):** 날짜 형식이 잘못되었습니다 (Invalid date format)\n"
+        )
+    if not valid_time(time_in):
+        return (
+            f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
+            f"- **날짜 (Date):** {date}\n"
+            f"- **상태 (Status):** 출근 시간 형식이 잘못되었습니다 (Invalid check-in time format)\n"
+        )
     
-    c.execute("SELECT * FROM attendance WHERE user_id = ? ORDER BY date DESC LIMIT 7", (user_id,))
+    # Add ROWID to the selection to ensure unique record identification
+    c.execute("""
+        SELECT ROWID, user_id, date, time_in, time_out, location 
+        FROM attendance 
+        WHERE user_id = ? 
+        ORDER BY date DESC, time_in DESC 
+        LIMIT 7
+    """, (user_id,))
     records = list(reversed(c.fetchall()))
 
     if not records:
@@ -202,10 +237,11 @@ def edit_record(bot, c, conn, user_id, index, date, time_in, time_out=None, loca
     try:
         # Select the record corresponding to the index
         record = records[int(index)]
-        user_id, date_old, time_in_old, time_out_old, location_old = record
+        row_id, user_id, date_old, time_in_old, time_out_old, location_old = record
         
     except IndexError:
         return "Error: Invalid record index."
+
     if time_out:
         if is_past(time_out, time_in):
             return (
@@ -213,17 +249,31 @@ def edit_record(bot, c, conn, user_id, index, date, time_in, time_out=None, loca
                 f"- **날짜 (Date):** {date}\n"
                 f"- **상태 (Status):** 퇴근 시간이 출근 시간보다 빠를 수 없습니다 (Check-out time cannot be earlier than check-in time)\n"
             )
-        c.execute("UPDATE attendance SET date = ?, time_in = ?, time_out = ?, location = ? WHERE user_id = ? AND date = ? AND time_in = ?", 
-                    (date, time_in, time_out, location if location else location_old, user_id, date_old, time_in_old))
+        if not valid_time(time_out):
+            return (
+                f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
+                f"- **날짜 (Date):** {date}\n"
+                f"- **상태 (Status):** 퇴근 시간 형식이 잘못되었습니다 (Invalid check-out time format)\n"
+            )
+        # Use ROWID for precise record identification
+        c.execute("""
+            UPDATE attendance 
+            SET date = ?, time_in = ?, time_out = ?, location = ? 
+            WHERE ROWID = ?
+        """, (date, time_in, time_out, location if location else location_old, row_id))
     else:
-        c.execute("UPDATE attendance SET date = ?, time_in = ?, location = ? WHERE user_id = ? AND date = ? AND time_in = ?",
-                    (date, time_in, location if location else location_old, user_id, date_old, time_in_old))
+        c.execute("""
+            UPDATE attendance 
+            SET date = ?, time_in = ?, location = ? 
+            WHERE ROWID = ?
+        """, (date, time_in, location if location else location_old, row_id))
+    
     conn.commit()
     return (
         f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
         f"- **날짜 (Date):** {date}\n"
         f"- **시간 (Time):** {time_in} - {time_out if time_out else 'Not checked out'}\n"
-        f"- **위치 (Location):** {location}\n"
+        f"- **위치 (Location):** {location if location else location_old}\n"
         f"- **상태 (Status):** 성공적으로 수정됨 (Successfully edited)\n"
     )
 
@@ -253,6 +303,14 @@ def delete_record(bot, c, conn, user_id, index):
     )
 
 def record_vacation(bot, c, conn, user_id, start_date, end_date, reason):
+    # Check date format
+    if not valid_date(start_date) or not valid_date(end_date):
+        return (
+            f"## 휴가 기록 (Vacation Record)\n"
+            f"- **시작일 (Start Date):** {start_date}\n"
+            f"- **종료일 (End Date):** {end_date}\n"
+            f"- **상태 (Status):** 날짜 형식이 잘못되었습니다 (Invalid date format)\n"
+        )
     c.execute("INSERT INTO vacations VALUES (?, ?, ?, ?)", 
               (user_id, start_date, end_date, reason))
     conn.commit()
@@ -269,6 +327,13 @@ def get_team_status(bot, c, conn, day=None):
         # Get the current date in the team's timezone
         now = get_datetime()
         day = now.strftime("%Y-%m-%d")
+    else:
+        if not valid_date(day):
+            return (
+                f"## 오류: 잘못된 날짜 형식 (Error: Invalid date format)\n"
+                f"올바른 형식: `YYYY-MM-DD`\n"
+                f"예시: `2024-12-31`\n"
+            )
     
     # Check if the day is a holiday
     y, m, d = map(int, day.split('-'))
@@ -318,11 +383,20 @@ def get_team_status(bot, c, conn, day=None):
     else:
         return "#### :warning: Team Status\n**No team members with attendance records found.**"
 
+
 def get_monthly_report(bot, c, conn, requested_user, year=None, month=None):
+    # YYYY-MM
     if year is None or month is None:
         now = get_datetime()
         year = now.strftime("%Y")
         month = now.strftime("%m")
+    else:
+        if not year.isdigit() or not month.isdigit():
+            return (
+                f"## 오류: 잘못된 날짜 형식 (Error: Invalid date format)\n"
+                f"올바른 형식: `YYYY-MM`\n"
+                f"예시: `2024-08`\n"
+            )
     
     c.execute("SELECT * FROM attendance WHERE strftime('%Y', date) = ? AND strftime('%m', date) = ?", (year, month))
     records = c.fetchall()
@@ -345,45 +419,44 @@ def get_monthly_report(bot, c, conn, requested_user, year=None, month=None):
     # Calculate statistics
     requested_user_hours = []
     all_users_hours = []
-    all_users_attended_days = set()
-    requested_user_attended_days = set()
+    users_attended_days = {}  # Dictionary to store attended days per user
 
+    # Initialize attended days counter for each user
+    for user_id in report.keys():
+        users_attended_days[user_id] = set()
+
+    # Calculate hours and attended days
     for user_id, user_records in report.items():
         for date, day_records in user_records.items():
             daily_hours = 0
             for time_in, time_out, location in day_records:
-                # If time_in is HH:MM, convert to HH:MM:SS
-                if len(time_in) < 8:
-                    time_in += ":00"
-                if len(time_out) < 8:
-                    time_out += ":00"
-                time_in_dt = datetime.datetime.strptime(time_in, "%H:%M:%S")
-                time_out_dt = datetime.datetime.strptime(time_out, "%H:%M:%S")
+                time_in_dt = datetime.datetime.strptime(time_in, "%H:%M")
+                time_out_dt = datetime.datetime.strptime(time_out, "%H:%M")
                 hours_worked = (time_out_dt - time_in_dt).total_seconds() / 3600
                 daily_hours += hours_worked
             
             all_users_hours.append(daily_hours)
-            all_users_attended_days.add(date)
+            users_attended_days[user_id].add(date)
             
             if user_id == requested_user:
                 requested_user_hours.append(daily_hours)
-                requested_user_attended_days.add(date)
 
     # Calculate requested user's stats
-    if requested_user_hours:
+    if requested_user in users_attended_days and requested_user_hours:
         requested_user_avg_hours = mean(requested_user_hours)
         requested_user_stdev_hours = stdev(requested_user_hours) if len(requested_user_hours) > 1 else 0
         requested_user_stats = f"#### Requested User Stats\n" \
                                f"- **Avg hours**: {requested_user_avg_hours:.2f}\n" \
                                f"- **Stdev**: {requested_user_stdev_hours:.2f}\n" \
-                               f"- **Attended days**: {len(requested_user_attended_days)}"
+                               f"- **Attended days**: {len(users_attended_days[requested_user])}"
     else:
         requested_user_stats = "#### Requested User Stats\n**No attendance records**"
 
-    # Calculate all users' average hours
+    # Calculate all users' average stats
     if all_users_hours:
         all_users_avg_hours = mean(all_users_hours)
-        all_users_avg_attended_days = len(all_users_attended_days) / len(report)
+        # Calculate average attended days across all users
+        all_users_avg_attended_days = mean([len(days) for days in users_attended_days.values()])
         all_users_stats = f"#### All Users Stats\n" \
                           f"- **Avg hours**: {all_users_avg_hours:.2f}\n" \
                           f"- **Avg attended days**: {all_users_avg_attended_days:.2f}"
@@ -392,6 +465,37 @@ def get_monthly_report(bot, c, conn, requested_user, year=None, month=None):
 
     return f"{requested_user_stats}\n\n{all_users_stats}"
 
+
+def fix_database(bot, c, conn):
+    # Fix the database for any inconsistencies
+    # 1. Delete records with time_out but no time_in
+    # 2. Delete duplicate records
+    # 3. If time_in is "HH:MM:SS", change to "HH:MM"
+    # 4. If time_out is "HH:MM:SS", change to "HH:MM"
+    # 5. If time_in is over 24:00, change to 00:00
+    # 6. If time_out is over 24:00, change to 23:59
+    # 7. If time_in is recorded but time_out is not, set time_out to 23:59
+    c.execute("SELECT * FROM attendance")
+    records = c.fetchall()
+
+    for record in records:
+        user_id, date, time_in, time_out, location = record
+        if time_out and not time_in:                        # 1. Delete records with time_out but no time_in
+            c.execute("DELETE FROM attendance WHERE user_id = ? AND date = ?", (user_id, date))
+        if time_in and time_out and time_in == time_out:  # 2. Delete duplicate records
+            c.execute("DELETE FROM attendance WHERE user_id = ? AND date = ?", (user_id, date))
+        if time_in and len(time_in) > 5:                  # 3. If time_in is "HH:MM:SS", change to "HH:MM"
+            c.execute("UPDATE attendance SET time_in = ? WHERE user_id = ? AND date = ?", (time_in[:5], user_id, date))
+        if time_out and len(time_out) > 5:                # 4. If time_out is "HH:MM:SS", change to "HH:MM"
+            c.execute("UPDATE attendance SET time_out = ? WHERE user_id = ? AND date = ?", (time_out[:5], user_id, date))
+        if time_in and time_in > "23:59":                 # 5. If time_in is over 24:00, change to 00:00
+            c.execute("UPDATE attendance SET time_in = ? WHERE user_id = ? AND date = ?", ("00:00", user_id, date))
+        if time_out and time_out > "23:59":               # 6. If time_out is over 24:00, change to 23:59
+            c.execute("UPDATE attendance SET time_out = ? WHERE user_id = ? AND date = ?", ("23:59", user_id, date))
+        if time_in and not time_out:                      # 7. If time_in is recorded but time_out is not, set time_out to 23:59
+            c.execute("UPDATE attendance SET time_out = ? WHERE user_id = ? AND date = ?", ("23:59", user_id, date))
+    conn.commit()
+    return "Database fixed successfully"
 
 ################################
 ### Member Management System ###

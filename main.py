@@ -9,7 +9,8 @@ from configs import DB_PATH, mattermost_url, bot_token, channel_id_attendance, c
     DEBUG
 from commands import help_command, record_attendance, record_missing, recent_records, edit_record, delete_record, \
     record_vacation, get_team_status, get_monthly_report, \
-    add_member, update_member, delete_member, get_member
+    add_member, update_member, delete_member, get_member, \
+    fix_database
 from utils import birthday_greeting_daily, birthday_greeting_monthly, auto_checkout
 
 
@@ -71,10 +72,10 @@ def handle_message(post):
                 return (
                     f"## 잘못된 형식 (Invalid Format)\n"
                     f"올바른 사용법: `!missing YYYY-MM-DD <time_in> <time_out>`\n"
-                    f"예시: `!missing 2024-08-01 09:00:00 18:00:00`\n"
+                    f"예시: `!missing 2024-08-01 09:00 18:00`\n"
                     f"\n"
                     f"Use: `!missing YYYY-MM-DD <time_in> <time_out>`\n"
-                    f"Example: `!missing 2024-08-01 09:00:00 18:00:00`\n"
+                    f"Example: `!missing 2024-08-01 09:00 18:00`\n"
                 )
             return record_missing(bot, c, conn, user_id, text[1], text[2], text[3])
         elif command == '!최근기록' or command == '!recentrecord':
@@ -85,11 +86,11 @@ def handle_message(post):
                     f"## 잘못된 형식 (Invalid Format)\n"
                     f"올바른 사용법: `!edit <인덱스> <날짜> <출근시간> <퇴근시간:선택> <위치:선택>`\n"
                     f"인덱스는 최근 7일 출퇴근 기록에서 선택한 인덱스입니다. '!최근기록'을 사용해 확인하세요.\n"
-                    f"예시: `!edit 0 2024-08-01 09:00:00 18:00:00 집`\n"
+                    f"예시: `!edit 0 2024-08-01 09:00 18:00 집`\n"
                     f"\n"
                     f"Use: `!edit <index> <date> <time_in> <time_out:optional> <location:optional>`\n"
                     f"Index is selected from recent 7 days' attendance records. Use `!recentrecord` to check.\n"
-                    f"Example: `!edit 0 2024-08-01 09:00:00 18:00:00 Home`\n"
+                    f"Example: `!edit 0 2024-08-01 09:00 18:00 Home`\n"
                 )
             return edit_record(bot, c, conn, user_id, text[1], text[2], text[3], text[4] if len(text) > 4 else None, text[5] if len(text) > 5 else None)
         elif command == '!삭제' or command == '!delete':
@@ -230,6 +231,16 @@ def handle_message(post):
                     f"\n"
                     f"Member {text[1]} does not exist.\n"
                 )
+        elif command == '!fixdatabase':
+            try:
+                return fix_database(bot, c, conn)
+            except sqlite3.IntegrityError:
+                return (
+                    f"## 오류: 데이터베이스 오류 (Database Error)\n"
+                    f"데이터베이스 오류가 발생했습니다.\n"
+                    f"\n"
+                    f"An error occurred in the database.\n"
+                )
         else:
             return (
                 f"## 알 수 없는 명령어 (Unknown command)\n"
@@ -276,6 +287,8 @@ def main():
     while True:
         ### Post birthday greetings every day at 12:00 PM ###
         now = datetime.datetime.now()
+        # Timezone = Asia/Seoul
+        now = now.replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
 
         ##########################
         ### Birthday greetings ###
