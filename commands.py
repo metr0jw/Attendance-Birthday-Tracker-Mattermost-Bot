@@ -3,8 +3,9 @@ from statistics import mean, stdev
 import datetime
 
 from configs import get_datetime, cal, channel_id_attendance
-from utils import is_future, is_past, valid_date, valid_time
+from utils import DateTimeValidator
 
+validator = DateTimeValidator()
 
 def help_command():
     help_message = (
@@ -138,19 +139,19 @@ def record_attendance(bot, c, conn, user_id, action, location):
 
 def record_missing(bot, c, conn, user_id, date, time_in, time_out=None):
     # Check if future date, which is not allowed
-    if is_future(date):
+    if validator.is_future(date):
         return (
             f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
             f"- **날짜 (Date):** {date}\n"
             f"- **상태 (Status):** 미래 날짜는 기록할 수 없습니다 (Cannot record future dates)\n"
         )
-    if not valid_date(date):
+    if not validator.valid_date(date):
         return (
             f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
             f"- **날짜 (Date):** {date}\n"
             f"- **상태 (Status):** 날짜 형식이 잘못되었습니다 (Invalid date format)\n"
         )
-    if not valid_time(time_in):
+    if not validator.valid_time(time_in):
         return (
             f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
             f"- **날짜 (Date):** {date}\n"
@@ -158,13 +159,13 @@ def record_missing(bot, c, conn, user_id, date, time_in, time_out=None):
         )
     
     if time_out:
-        if is_past(time_out, time_in):
+        if validator.is_past(time_out, time_in):
             return (
                 f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
                 f"- **날짜 (Date):** {date}\n"
                 f"- **상태 (Status):** 퇴근 시간이 출근 시간보다 빠를 수 없습니다 (Check-out time cannot be earlier than check-in time)\n"
             )
-        if not valid_time(time_out):
+        if not validator.valid_time(time_out):
             return (
                 f"## 누락된 출퇴근 기록 (Missing Attendance Recorded)\n"
                 f"- **날짜 (Date):** {date}\n"
@@ -202,19 +203,19 @@ def recent_records(bot, c, conn, user_id):
 
 def edit_record(bot, c, conn, user_id, index, date, time_in, time_out=None, location=None):
     # Edit a record within recent 7 days (0-indexed)
-    if is_future(date):
+    if validator.is_future(date):
         return (
             f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
             f"- **날짜 (Date):** {date}\n"
             f"- **상태 (Status):** 미래 날짜는 수정할 수 없습니다 (Cannot edit future dates)\n"
         )
-    if not valid_date(date):
+    if not validator.valid_date(date):
         return (
             f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
             f"- **날짜 (Date):** {date}\n"
             f"- **상태 (Status):** 날짜 형식이 잘못되었습니다 (Invalid date format)\n"
         )
-    if not valid_time(time_in):
+    if not validator.valid_time(time_in):
         return (
             f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
             f"- **날짜 (Date):** {date}\n"
@@ -243,13 +244,13 @@ def edit_record(bot, c, conn, user_id, index, date, time_in, time_out=None, loca
         return "Error: Invalid record index."
 
     if time_out:
-        if is_past(time_out, time_in):
+        if validator.is_past(time_out, time_in):
             return (
                 f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
                 f"- **날짜 (Date):** {date}\n"
                 f"- **상태 (Status):** 퇴근 시간이 출근 시간보다 빠를 수 없습니다 (Check-out time cannot be earlier than check-in time)\n"
             )
-        if not valid_time(time_out):
+        if not validator.valid_time(time_out):
             return (
                 f"## 출퇴근 기록 수정 (Attendance Record Edited)\n"
                 f"- **날짜 (Date):** {date}\n"
@@ -304,7 +305,7 @@ def delete_record(bot, c, conn, user_id, index):
 
 def record_vacation(bot, c, conn, user_id, start_date, end_date, reason):
     # Check date format
-    if not valid_date(start_date) or not valid_date(end_date):
+    if not validator.valid_date(start_date) or not validator.valid_date(end_date):
         return (
             f"## 휴가 기록 (Vacation Record)\n"
             f"- **시작일 (Start Date):** {start_date}\n"
@@ -328,7 +329,7 @@ def get_team_status(bot, c, conn, day=None):
         now = get_datetime()
         day = now.strftime("%Y-%m-%d")
     else:
-        if not valid_date(day):
+        if not validator.valid_date(day):
             return (
                 f"## 오류: 잘못된 날짜 형식 (Error: Invalid date format)\n"
                 f"올바른 형식: `YYYY-MM-DD`\n"
