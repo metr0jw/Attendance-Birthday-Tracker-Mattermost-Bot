@@ -347,7 +347,7 @@ def main():
 
         # Time constants
         NOON = time(12, 0)
-        MIDNIGHT = time(22, 36)
+        MIDNIGHT = time(23, 59) if not DEBUG else time(0, 0)
 
         def process_messages(channel_id: str, last_processed: int) -> int:
             try:
